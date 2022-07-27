@@ -1,0 +1,93 @@
+FROM public.ecr.aws/ubuntu/ubuntu:20.04 AS base
+
+ENV UBUNTU_CODENAME=focal
+ENV DEBIAN_FRONTEND=nonintercative
+ENV TZ=America/Los_Angeles
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# Use local Ubuntu sources if necessary
+# COPY source_mirrors/aliyun_sources_bionic.list /etc/apt/sources.list
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gnupg dirmngr ca-certificates git wget unzip curl \
+    build-essential cmake \
+    libssl-dev libboost-serialization-dev \
+    `# Pangolin deps` libgl1-mesa-dev libwayland-dev libxkbcommon-dev wayland-protocols libegl1-mesa-dev libc++-dev libglew-dev libeigen3-dev \
+    `# OpenCV required deps` libgtk2.0-dev pkg-config libavcodec-dev libavformat-dev libswscale-dev \
+    `# OpenCV optional deps: python-dev python-numpy libtbb2 libtbb-dev libjpeg-dev libpng-dev libtiff-dev libjasper-dev libdc1394-22-dev` \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+
+FROM base AS pangolin
+
+RUN git clone --depth 1 --branch v0.5 https://github.com/stevenlovegrove/Pangolin.git
+
+RUN cd Pangolin && \
+    mkdir build && \
+    cd build && \
+    cmake .. && \
+    make && \
+    make install
+
+
+FROM base AS opencv
+
+ENV OPENCV_VERSION=3.4.16
+
+RUN curl -L0 https://github.com/opencv/opencv/archive/${OPENCV_VERSION}.zip > ${OPENCV_VERSION}.zip && \
+    unzip ${OPENCV_VERSION}.zip
+
+RUN cd opencv-${OPENCV_VERSION} && \
+    mkdir build && \
+    cd build && \
+    cmake -D CMAKE_BUILD_TYPE=Release –D CMAKE_INSTALL_PREFIX=/usr/local .. && \
+    make && \
+    make install
+
+
+FROM base AS glog
+
+ENV GLOG_VERSION=0.5.0
+
+RUN curl -L0 https://github.com/google/glog/archive/refs/tags/v${GLOG_VERSION}.zip > ${GLOG_VERSION}.zip && \
+    unzip ${GLOG_VERSION}.zip
+
+RUN cd glog-${GLOG_VERSION} && \
+    mkdir build && \
+    cd build && \
+    cmake -D CMAKE_BUILD_TYPE=Release –D CMAKE_INSTALL_PREFIX=/usr/local .. && \
+    make && \
+    make install
+
+
+FROM base AS orb-slam2
+
+COPY --from=pangolin /usr/local /usr/local
+
+COPY --from=opencv /usr/local /usr/local
+
+COPY --from=glog /usr/local /usr/local
+
+
+FROM base AS basalt
+
+RUN apt-get install -y lsb-release software-properties-common && apt-get clean all
+
+RUN wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key| apt-key add -
+RUN echo "deb http://apt.llvm.org/focal/ llvm-toolchain-focal-11 main" > /etc/apt/sources.list.d/llvm11.list
+RUN echo "deb http://apt.llvm.org/focal/ llvm-toolchain-focal-12 main" > /etc/apt/sources.list.d/llvm12.list
+
+RUN apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-key F6E65AC044F831AC80A06380C8B3A55A6F3EFCDE
+RUN add-apt-repository "deb https://librealsense.intel.com/Debian/apt-repo $(lsb_release -cs) main" -u
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y cmake git libtbb-dev libeigen3-dev \
+    libglew-dev ccache libjpeg-dev libpng-dev openssh-client liblz4-dev libbz2-dev libboost-regex-dev libboost-filesystem-dev \
+    libboost-date-time-dev libboost-program-options-dev libopencv-dev libpython2.7-dev libgtest-dev lsb-core gcovr ggcov lcov \
+    librealsense2-dev librealsense2-gl-dev librealsense2-dkms librealsense2-utils doxygen graphviz libsuitesparse-dev clang-11 \
+    clang-format-11 clang-tidy-11 clang-12 clang-format-12 clang-tidy-12 libfmt-dev && apt-get clean all
+
+
+
+# ENV ROS_MIRROR_URL=http://packages.ros.org/ros/ubuntu
+# ENV ROS_MIRROR_URL=http://mirrors.sjtug.sjtu.edu.cn/ros/ubuntu
+
